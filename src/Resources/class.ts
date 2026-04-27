@@ -4,16 +4,17 @@ import {
   OpaqueIdentifier,
 } from '@sovereignbase/cryptosuite'
 import { KVStore } from '@sovereignbase/offline-kv-store'
-import { decode } from '@msgpack/msgpack'
+import { encode, decode } from '@msgpack/msgpack'
 import type { CipherStoreValue } from '../.types/index.js'
 
 export class CipherStore {
   public static offline = new KVStore<CipherStoreValue>('resources')
   public static cloud: string
   public static initialize() {}
+
   public static async get<T>(
     oid: OpaqueIdentifier,
-    cipherKey: CipherKey
+    sourceKey: Uint8Array
   ): Promise<T | undefined> {
     if (!Cryptographic.identifier.validate(oid)) return undefined
 
@@ -45,11 +46,24 @@ export class CipherStore {
     )
       return undefined
 
-    let key:CipherKey
-    let out:T
+    let key: CipherKey
+    let plain: Uint8Array
+    let out: T
 
     try {
-        out = Cryptographic.cipherMessage.decrypt()
+      key = (await Cryptographic.cipherMessage.deriveKey(sourceKey, { salt }))
+        .cipherKey
+      plain = await Cryptographic.cipherMessage.decrypt(key, { iv, ciphertext })
+      out = decode(plain) as T
+    } catch {
+      return undefined
     }
+    return out
   }
+
+  public static async put<T>(
+    oid: OpaqueIdentifier,
+    value: T,
+    sourceKey: Uint8Array
+  ) {}
 }
