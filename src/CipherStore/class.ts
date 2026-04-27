@@ -6,15 +6,17 @@ import {
 import { KVStore } from '@sovereignbase/offline-kv-store'
 import { encode, decode } from '@msgpack/msgpack'
 import type { CipherStoreValue } from '../.types/index.js'
+import { StationClient } from '@sovereignbase/station-client'
 
 export class CipherStore {
-  public static offline = new KVStore<CipherStoreValue>('resources')
-  public static cloud: string
-  public static initialize() {}
+  private static readonly offline = new KVStore<CipherStoreValue>(
+    'cipher-store'
+  )
 
   public static async get<T>(
     oid: OpaqueIdentifier,
-    sourceKey: Uint8Array
+    sourceKey: Uint8Array,
+    publicBucketUrl: string
   ): Promise<T | undefined> {
     if (!Cryptographic.identifier.validate(oid)) return undefined
 
@@ -22,11 +24,14 @@ export class CipherStore {
 
     if (!cipherValue) {
       if (navigator.onLine === false) return undefined
-      const res = await fetch(`https://cipher-store.sovereignbase.dev/${oid}`, {
-        headers: {
-          'Content-Type': 'application/msgpack',
-        },
-      })
+      const res = await fetch(
+        `${publicBucketUrl}${publicBucketUrl.endsWith('/') ? '' : '/'}${oid}`,
+        {
+          headers: {
+            'Content-Type': 'application/msgpack',
+          },
+        }
+      )
 
       if (res.status === 404 || !res.ok) return undefined
 
@@ -61,9 +66,35 @@ export class CipherStore {
     return out
   }
 
-  public static async put<T>(
+  public static async put<T extends Record<string, unknown>>(
     oid: OpaqueIdentifier,
-    value: T,
-    sourceKey: Uint8Array
-  ) {}
+    value: unknown,
+    sourceKey: Uint8Array,
+    baseStation: StationClient<T>
+  ): Promise<void> {
+    if (!Cryptographic.identifier.validate(oid)) throw new Error('')
+    if (!(sourceKey instanceof Uint8Array)) throw new Error('')
+
+    let bytes: Uint8Array
+
+    try {
+      bytes = encode(value)
+    } catch {
+      throw new Error('')
+    }
+
+    const { salt, cipherKey } =
+      await Cryptographic.cipherMessage.deriveKey(sourceKey)
+
+    const { iv, ciphertext } = await Cryptographic.cipherMessage.encrypt(
+      cipherKey,
+      bytes
+    )
+
+    const cipherValue: CipherStoreValue = { iv, salt, ciphertext }
+
+    void this.offline.put(oid, cipherValue)
+
+    void baseStation.post({ kind: 'cipherBackup', detail: cipherValue })
+  }
 }
